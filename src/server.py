@@ -1,5 +1,12 @@
 import argparse
+import logging
 import uvicorn
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s  %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -24,16 +31,16 @@ def main():
     # See: https://a2a-protocol.org/latest/tutorials/python/3-agent-skills-and-card/
     
     skill = AgentSkill(
-        id="",
-        name="",
-        description="",
-        tags=[],
-        examples=[]
+        id="customer-service",
+        name="Customer Service",
+        description="Handle customer service tasks across airline, retail, and telecom domains by following policies and using available tools",
+        tags=["customer-service", "tau2-bench"],
+        examples=["Help me change my flight", "I want to return an order", "Upgrade my phone plan"],
     )
 
     agent_card = AgentCard(
-        name="",
-        description="",
+        name="Tau2 Customer Service Agent",
+        description="A customer service agent that handles tasks across airline, retail, and telecom domains for the tau2-bench evaluation",
         url=args.card_url or f"http://{args.host}:{args.port}/",
         version='1.0.0',
         default_input_modes=['text'],

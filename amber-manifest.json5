@@ -1,14 +1,13 @@
 {
   manifest_version: "0.1.0",
 
-  // TODO: Declare all config your agent needs from the deployer
-  // Use secret: true for sensitive values like API keys
   config_schema: {
     type: "object",
     properties: {
-      my_api_key: { type: "string", secret: true },
+      openai_api_key: { type: "string", secret: true },
+      agent_model: { type: "string" },
     },
-    required: ["my_api_key"],
+    required: ["openai_api_key"],
     additionalProperties: false,
   },
 
@@ -19,18 +18,17 @@
 
   // Runtime configuration
   program: {
-    // TODO: Replace with your docker image
     image: "ghcr.io/<your-username>/<your-repo-name>:latest",
     entrypoint: "uv run python src/server.py --host 0.0.0.0 --port 9010",
 
-    // TODO: Pass config values as environment variables
     env: {
-      MY_API_KEY: "${config.my_api_key}",
+      OPENAI_API_KEY: "${config.openai_api_key}",
+      AGENT_MODEL: "${config.agent_model}",
     },
 
     network: {
       endpoints: [
-        { name: "a2a_endpoint", port: 9010 }, // ensure port matches your entrypoint
+        { name: "a2a_endpoint", port: 9010 },
       ],
     },
   },

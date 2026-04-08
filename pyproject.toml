@@ -1,11 +1,14 @@
 [project]
-name = "agent-template"
+name = "tau2-agent"
 version = "0.1.0"
-description = "A template for A2A agents"
+description = "A customer service agent for the tau2-bench evaluation"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "a2a-sdk[http-server]>=0.3.20",
+    "langgraph>=0.3.0",
+    "litellm>=1.80.9",
+    "python-dotenv>=1.2.1",
     "uvicorn>=0.38.0",
 ]
 
