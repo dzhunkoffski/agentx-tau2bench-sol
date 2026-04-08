@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 
 load_dotenv()
 
-MODEL = os.environ.get("AGENT_MODEL", "openrouter/google/gemma-4-31b-it:free")
+MODEL = os.environ.get("AGENT_MODEL", "gpt-4o-mini")
 MAX_RETRIES = int(os.environ.get("AGENT_MAX_RETRIES", "2"))
 
 SYSTEM_PROMPT = """\
@@ -95,7 +95,7 @@ async def call_llm(state: TurnState) -> dict:
         model=MODEL,
         messages=state["messages"],
         temperature=0.0,
-        api_key=os.environ.get("OPENROUTER_API_KEY"),
+        api_key=os.environ.get("OPENAI_API_KEY"),
     )
     content = result.choices[0].message.content
     updated_messages = state["messages"] + [{"role": "assistant", "content": content}]
