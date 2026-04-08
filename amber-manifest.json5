@@ -5,7 +5,7 @@
     type: "object",
     properties: {
       openrouter_api_key: { type: "string", secret: true },
-      agent_model: { type: "string" },
+      model: { type: "string" },
     },
     required: ["openrouter_api_key"],
     additionalProperties: false,
@@ -23,7 +23,7 @@
 
     env: {
       OPENROUTER_API_KEY: "${config.openrouter_api_key}",
-      AGENT_MODEL: "${config.agent_model}",
+      AGENT_MODEL: "${config.model}",
     },
 
     network: {
