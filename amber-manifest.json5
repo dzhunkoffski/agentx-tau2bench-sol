@@ -4,10 +4,10 @@
   config_schema: {
     type: "object",
     properties: {
-      openai_api_key: { type: "string", secret: true },
+      openrouter_api_key: { type: "string", secret: true },
       agent_model: { type: "string" },
     },
-    required: ["openai_api_key"],
+    required: ["openrouter_api_key"],
     additionalProperties: false,
   },
 
@@ -18,11 +18,11 @@
 
   // Runtime configuration
   program: {
-    image: "ghcr.io/<your-username>/<your-repo-name>:latest",
+    image: "ghcr.io/dzhunkoffski/agentx-tau2bench-sol:latest",
     entrypoint: "uv run python src/server.py --host 0.0.0.0 --port 9010",
 
     env: {
-      OPENAI_API_KEY: "${config.openai_api_key}",
+      OPENROUTER_API_KEY: "${config.openrouter_api_key}",
       AGENT_MODEL: "${config.agent_model}",
     },
 
