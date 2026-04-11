@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 load_dotenv()
 
 MODEL = os.environ.get("AGENT_MODEL", "gpt-4o-mini")
-MAX_RETRIES = int(os.environ.get("AGENT_MAX_RETRIES", "2"))
+MAX_RETRIES = int(os.environ.get("AGENT_MAX_RETRIES", "4"))
 
 SYSTEM_PROMPT = """\
 You are a customer service agent. Follow the domain policy and tool instructions \
@@ -27,11 +27,15 @@ provided in the conversation exactly.
 
 CRITICAL RULES:
 1. ALWAYS respond with a single valid JSON object, nothing else.
-2. Format: {"name": "<action>", "arguments": {<params>}}
-3. Use tool names from the provided list, or "respond" to reply to the user.
-4. ONE action per turn — never combine tool calls and responses.
-5. Follow the domain policy strictly — do not deviate or make exceptions.
-6. Output ONLY raw JSON — no markdown, no code blocks, no extra text.
+2. Format: {"think": "<your internal reasoning>", "name": "<action>", "arguments": {<params>}}
+3. Use the "think" field to reason BEFORE choosing an action:
+   - Which policy rule applies to this situation?
+   - What information do I still need to look up?
+   - Have I called all the required tools before responding?
+4. Use tool names from the provided list, or "respond" to reply to the user.
+5. ONE action per turn — never combine tool calls and responses.
+6. Follow the domain policy strictly — do not deviate or make exceptions.
+7. Output ONLY raw JSON — no markdown, no code blocks, no extra text.
 
 TOOL-USE DISCIPLINE (most important):
 - You MUST call tools to look up or verify any information before acting on it or
@@ -43,7 +47,10 @@ TOOL-USE DISCIPLINE (most important):
 - Only use {"name": "respond", ...} AFTER all required tools have been called and
   you are ready to give the user a final, accurate confirmation.
 - If uncertain what to do next, call a tool to gather more information rather than
-  responding to the user prematurely."""
+  responding to the user prematurely.
+- When the user asks you to do something (cancel, change, refund, etc.), you MUST
+  first look up the relevant record with a tool, then call the action tool to
+  make the change, and only THEN respond to confirm."""
 
 
 # ---------------------------------------------------------------------------
@@ -73,18 +80,23 @@ class TurnState(TypedDict):
     response: str              # Raw LLM response text
     parsed_response: str       # Cleaned JSON string
     retry_count: int           # Number of retries so far
+    tools_called: list[str]    # Tools called so far in this conversation
 
 
 RESPOND_ACTION_NAME = "respond"
 
 
 def _extract_action(parsed: dict | list) -> dict | None:
-    """Mirror the green agent's _parse_response logic: accept dict or list."""
+    """Mirror the green agent's _parse_response logic: accept dict or list.
+
+    Also strips the ``think`` field so it never reaches the evaluator.
+    """
     if isinstance(parsed, list):
         if not parsed:
             return None
         parsed = parsed[0]
     if isinstance(parsed, dict) and "name" in parsed:
+        parsed.pop("think", None)
         return parsed
     return None
 
@@ -103,12 +115,18 @@ async def call_llm(state: TurnState) -> dict:
 
 
 async def parse_response(state: TurnState) -> dict:
-    """Strip markdown / extra text to extract raw JSON."""
+    """Strip markdown / extra text to extract raw JSON.
+
+    Also tracks which tools have been called so far (for premature-respond
+    detection) and strips the ``think`` field from the final output.
+    """
     cleaned = strip_to_json(state["response"])
+    tools_called = list(state.get("tools_called") or [])
 
     # Log whether the LLM decided to call a tool or respond to the user.
     try:
-        action = _extract_action(json.loads(cleaned))
+        parsed = json.loads(cleaned)
+        action = _extract_action(parsed)
         if action:
             name = action.get("name", "?")
             if name == RESPOND_ACTION_NAME:
@@ -117,22 +135,33 @@ async def parse_response(state: TurnState) -> dict:
             else:
                 log.info("[purple-agent] ACTION=tool_call  tool=%r  args=%s",
                          name, json.dumps(action.get("arguments", {}))[:200])
+                tools_called.append(name)
+            # Re-serialize without the "think" field
+            cleaned = json.dumps(parsed if isinstance(parsed, list) else action)
     except Exception:
         log.warning("[purple-agent] Could not parse LLM output as action: %r",
                     cleaned[:200])
 
-    return {"parsed_response": cleaned}
+    return {"parsed_response": cleaned, "tools_called": tools_called}
 
 
 def check_json(state: TurnState) -> str:
     """Route to END if valid JSON action, otherwise retry or give up.
 
     Mirrors the green agent's _parse_response: accepts both dict and list.
+    Also validates that ``arguments`` is a dict and that the agent isn't
+    responding prematurely (before calling any tools).
     """
     try:
-        action = _extract_action(json.loads(state["parsed_response"]))
+        parsed = json.loads(state["parsed_response"])
+        action = _extract_action(parsed)
         if action is not None:
-            return "valid"
+            # Validate arguments field is a dict (or absent)
+            args = action.get("arguments")
+            if args is not None and not isinstance(args, dict):
+                log.warning("[purple-agent] 'arguments' is not a dict — retrying")
+            else:
+                return "valid"
     except (json.JSONDecodeError, TypeError):
         pass
     if state.get("retry_count", 0) >= MAX_RETRIES:
@@ -146,11 +175,14 @@ def check_json(state: TurnState) -> str:
 
 async def add_retry(state: TurnState) -> dict:
     """Append a corrective prompt and bump the retry counter."""
+    failed_output = state.get("response", "")[:500]
     retry_msg = {
         "role": "user",
         "content": (
-            "Your response was not valid JSON with the required format. "
-            'Respond with ONLY a JSON object: {"name": "...", "arguments": {...}}'
+            f"Your response was not valid JSON with the required format. "
+            f"You said:\n{failed_output}\n\n"
+            f"Fix it. Respond with ONLY a JSON object: "
+            f'{{"think": "...", "name": "...", "arguments": {{...}}}}'
         ),
     }
     return {
@@ -199,6 +231,7 @@ class Agent:
     def __init__(self):
         self.messenger = Messenger()
         self.history: list[dict] = []
+        self.tools_called: list[str] = []
         self.graph = build_graph()
 
     async def run(self, message: Message, updater: TaskUpdater) -> None:
@@ -220,10 +253,14 @@ class Agent:
                 "response": "",
                 "parsed_response": "",
                 "retry_count": 0,
+                "tools_called": list(self.tools_called),
             }
         )
 
         response_text = result["parsed_response"]
+
+        # Track tools called across turns
+        self.tools_called = result.get("tools_called", self.tools_called)
 
         # Keep only the final answer in persistent history (not retry prompts)
         self.history.append({"role": "assistant", "content": response_text})
